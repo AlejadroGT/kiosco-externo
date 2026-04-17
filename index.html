@@ -417,10 +417,10 @@
 
         if (cameras && cameras.length) {
           const preferred =
-            cameras.find(c => /back|rear|environment|trasera/i.test(c.label || '')) || cameras[0];
+            cameras.find(c => /front|user|selfie|frontal/i.test(c.label || '')) || cameras[0];
           await startScannerOnFreshInstance(preferred.id);
         } else {
-          await startScannerOnFreshInstance({ facingMode: { ideal: 'environment' } });
+          await startScannerOnFreshInstance({ facingMode: { ideal: 'user' } });
         }
       } catch (err) {
         await stopScannerSilently();
