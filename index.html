@@ -335,7 +335,7 @@
     }
 
     function blockQrLocally(qrText) {
-      appState.localCooldownByQr[qrText] = Date.now() + (5 * 60 * 1000);
+      appState.localCooldownByQr[qrText] = Date.now() + (60 * 1000);
     }
 
     async function requestCameraPermissionOnce() {
@@ -461,7 +461,7 @@
         showFeedback({
           variant: 'warning',
           title: 'Código ya registrado',
-          subtitle: 'Espera 5 minutos antes de volver a escanear este mismo QR.',
+          subtitle: 'Espera 1 minuto antes de volver a escanear este mismo QR.',
           meta: normalizedText,
           duration: 2600
         });
@@ -502,6 +502,20 @@
 
         const personName = res.person && res.person.fullName ? res.person.fullName : 'Trabajador';
         const operationName = res.operation || (res.person && res.person.currentOperation) || '';
+
+        if (res.duplicate) {
+          showFeedback({
+            variant: 'info',
+            title: 'Marcación ya registrada',
+            subtitle: 'No se guardó otra marcación para ' + personName + '.',
+            meta: [operationName, res.timestamp, 'Espera 1 minuto'].filter(Boolean).join(' · '),
+            photoUrl: res.person && res.person.fotoUrl ? res.person.fotoUrl : '',
+            duration: 2600
+          });
+          document.getElementById('footerStatus').textContent = 'La marcación de ' + personName + ' ya estaba registrada. No se duplicó.';
+          return;
+        }
+
         const isEntry = res.action === 'ENTRADA';
 
         showFeedback({
@@ -515,14 +529,15 @@
 
         document.getElementById('footerStatus').textContent = (isEntry ? 'Entrada' : 'Salida') + ' registrada para ' + personName + '.';
       } catch (err) {
+        blockQrLocally(normalizedText);
         showFeedback({
           variant: 'warning',
-          title: 'Error de conexión',
-          subtitle: err.message || String(err),
-          meta: '',
-          duration: 3000
+          title: 'Respuesta no confirmada',
+          subtitle: 'No vuelvas a escanear este QR por 1 minuto. Si no aparece en monitor, avisa al encargado.',
+          meta: err.message || String(err),
+          duration: 4200
         });
-        document.getElementById('footerStatus').textContent = err.message || String(err);
+        document.getElementById('footerStatus').textContent = 'Respuesta no confirmada. Espera 1 minuto antes de intentar de nuevo o avisa al encargado.';
       } finally {
         setTimeout(() => {
           appState.scanLocked = false;
@@ -617,6 +632,7 @@
           }
         });
         url.searchParams.set('callback', callbackName);
+        url.searchParams.set('_ts', String(Date.now()));
 
         script.src = url.toString();
         document.body.appendChild(script);
