@@ -118,6 +118,56 @@
       min-height: 70vh;
       background: rgba(255,255,255,0.06);
     }
+    .scanner-latest {
+      position: absolute;
+      left: 18px;
+      right: 18px;
+      top: 18px;
+      z-index: 5;
+      display: grid;
+      grid-template-columns: 74px 1fr;
+      gap: 14px;
+      align-items: center;
+      padding: 14px 16px;
+      border-radius: 22px;
+      background: rgba(0,0,0,0.52);
+      border: 1px solid rgba(255,255,255,0.14);
+      backdrop-filter: blur(8px);
+      box-shadow: 0 16px 34px rgba(0,0,0,0.24);
+    }
+    .scanner-latest-photo, .scanner-latest-placeholder {
+      width: 74px;
+      height: 74px;
+      border-radius: 18px;
+      object-fit: cover;
+      background: rgba(255,255,255,0.16);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 26px;
+      border: 2px solid rgba(255,255,255,0.12);
+    }
+    .scanner-latest-label {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: rgba(140,198,63,0.90);
+      color: #10243f;
+      font-size: 12px;
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+    .scanner-latest-name {
+      font-size: 24px;
+      line-height: 1.1;
+      font-weight: bold;
+    }
+    .scanner-latest-meta {
+      margin-top: 6px;
+      color: rgba(255,255,255,0.90);
+      font-size: 14px;
+    }
     .scanner-hint {
       position: absolute;
       left: 50%;
@@ -224,6 +274,25 @@
       .feedback-title {
         font-size: 30px;
       }
+      .scanner-latest {
+        grid-template-columns: 56px 1fr;
+        left: 10px;
+        right: 10px;
+        top: 10px;
+        padding: 10px 12px;
+      }
+      .scanner-latest-photo, .scanner-latest-placeholder {
+        width: 56px;
+        height: 56px;
+        border-radius: 14px;
+        font-size: 20px;
+      }
+      .scanner-latest-name {
+        font-size: 18px;
+      }
+      .scanner-latest-meta {
+        font-size: 12px;
+      }
     }
   </style>
 </head>
@@ -245,6 +314,14 @@
     </div>
 
     <div class="scanner-card">
+      <div class="scanner-latest" id="scannerLatest">
+        <div class="scanner-latest-placeholder">QR</div>
+        <div>
+          <div class="scanner-latest-label">Última marcación</div>
+          <div class="scanner-latest-name">Esperando registro</div>
+          <div class="scanner-latest-meta">Aquí aparecerá la última entrada o salida confirmada.</div>
+        </div>
+      </div>
       <div id="reader"></div>
       <div class="scanner-hint" id="scannerHint">Coloca el QR dentro del cuadro. El sistema confirmará entrada o salida.</div>
     </div>
@@ -277,6 +354,7 @@
       scanLocked: false,
       localCooldownByQr: {},
       feedbackTimer: null,
+      latestMark: null,
       defaultEncargado: 'SISTEMA'
     };
 
@@ -302,8 +380,10 @@
 
       appState.config = res.config || {};
       appState.people = res.people || [];
+      appState.latestMark = (res.recent && res.recent.length) ? res.recent[0] : null;
       appState.defaultEncargado = appState.config.defaultEncargado || ((appState.config.encargados || [])[0] || 'SISTEMA');
 
+      renderLatestMark(appState.latestMark);
       document.getElementById('appName').textContent = appState.config.companyName || 'Multiservicios Redetenis';
       document.getElementById('appSubtitle').textContent = appState.config.companyTagline || 'Kiosco QR';
       document.getElementById('brandLogo').src = appState.config.logoUrl || BRAND_LOGO_DATA_URL;
@@ -500,22 +580,20 @@
 
         blockQrLocally(normalizedText);
 
+        appState.latestMark = (res.recent && res.recent.length) ? res.recent[0] : {
+          action: res.action,
+          type: res.action,
+          operation: res.operation || '',
+          timestamp: res.timestamp || '',
+          datetime: res.timestamp || '',
+          person: res.person || null,
+          fullName: res.person && res.person.fullName ? res.person.fullName : 'Trabajador',
+          fotoUrl: res.person && res.person.fotoUrl ? res.person.fotoUrl : ''
+        };
+        renderLatestMark(appState.latestMark);
+
         const personName = res.person && res.person.fullName ? res.person.fullName : 'Trabajador';
         const operationName = res.operation || (res.person && res.person.currentOperation) || '';
-
-        if (res.duplicate) {
-          showFeedback({
-            variant: 'info',
-            title: 'Marcación ya registrada',
-            subtitle: 'No se guardó otra marcación para ' + personName + '.',
-            meta: [operationName, res.timestamp, 'Espera 1 minuto'].filter(Boolean).join(' · '),
-            photoUrl: res.person && res.person.fotoUrl ? res.person.fotoUrl : '',
-            duration: 2600
-          });
-          document.getElementById('footerStatus').textContent = 'La marcación de ' + personName + ' ya estaba registrada. No se duplicó.';
-          return;
-        }
-
         const isEntry = res.action === 'ENTRADA';
 
         showFeedback({
@@ -530,19 +608,70 @@
         document.getElementById('footerStatus').textContent = (isEntry ? 'Entrada' : 'Salida') + ' registrada para ' + personName + '.';
       } catch (err) {
         blockQrLocally(normalizedText);
+        try {
+          await refreshAll();
+        } catch (refreshErr) {}
+
         showFeedback({
           variant: 'warning',
           title: 'Respuesta no confirmada',
-          subtitle: 'No vuelvas a escanear este QR por 1 minuto. Si no aparece en monitor, avisa al encargado.',
+          subtitle: 'Revisa la última marcación mostrada arriba antes de volver a escanear.',
           meta: err.message || String(err),
-          duration: 4200
+          duration: 3600
         });
-        document.getElementById('footerStatus').textContent = 'Respuesta no confirmada. Espera 1 minuto antes de intentar de nuevo o avisa al encargado.';
+        document.getElementById('footerStatus').textContent = 'No se confirmó la respuesta. Verifica la última marcación mostrada antes de repetir.';
       } finally {
         setTimeout(() => {
           appState.scanLocked = false;
         }, 900);
       }
+    }
+
+
+    function renderLatestMark(row) {
+      const box = document.getElementById('scannerLatest');
+      if (!box) return;
+
+      if (!row) {
+        box.innerHTML = `
+          <div class="scanner-latest-placeholder">QR</div>
+          <div>
+            <div class="scanner-latest-label">Última marcación</div>
+            <div class="scanner-latest-name">Esperando registro</div>
+            <div class="scanner-latest-meta">Aquí aparecerá la última entrada o salida confirmada.</div>
+          </div>`;
+        return;
+      }
+
+      const name = row.fullName || (row.person && row.person.fullName) || 'Trabajador';
+      const type = row.type || row.action || '';
+      const operation = row.operation || '';
+      const datetime = row.datetime || row.timestamp || '';
+      const encargado = row.encargado || '';
+      const cargo = row.cargo || (row.person && row.person.cargo) || '';
+      const photoUrl = row.fotoUrl || (row.person && row.person.fotoUrl) || '';
+      const initials = getInitials(name);
+      const label = type === 'SALIDA' ? 'Última salida registrada' : 'Última entrada registrada';
+      const visual = photoUrl
+        ? `<img class="scanner-latest-photo" src="${photoUrl}" alt="foto">`
+        : `<div class="scanner-latest-placeholder">${escapeHtml(initials)}</div>`;
+
+      box.innerHTML = `${visual}
+        <div>
+          <div class="scanner-latest-label">${escapeHtml(label)}</div>
+          <div class="scanner-latest-name">${escapeHtml(name)}</div>
+          <div class="scanner-latest-meta">${escapeHtml([cargo, operation, datetime].filter(Boolean).join(' · '))}${encargado ? ' · Encargado: ' + escapeHtml(encargado) : ''}</div>
+        </div>`;
+    }
+
+    function getInitials(name) {
+      return String(name || 'QR')
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map(part => part.charAt(0).toUpperCase())
+        .join('') || 'QR';
     }
 
     function showFeedback(data) {
@@ -632,7 +761,6 @@
           }
         });
         url.searchParams.set('callback', callbackName);
-        url.searchParams.set('_ts', String(Date.now()));
 
         script.src = url.toString();
         document.body.appendChild(script);
