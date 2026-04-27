@@ -119,21 +119,19 @@
       background: rgba(255,255,255,0.06);
     }
     .scanner-latest {
-      position: absolute;
-      left: 18px;
-      right: 18px;
-      top: 18px;
-      z-index: 5;
+      position: relative;
+      z-index: 1;
       display: grid;
       grid-template-columns: 74px 1fr;
       gap: 14px;
       align-items: center;
       padding: 14px 16px;
       border-radius: 22px;
-      background: rgba(0,0,0,0.52);
-      border: 1px solid rgba(255,255,255,0.14);
+      margin-bottom: 14px;
+      background: rgba(255,255,255,0.14);
+      border: 1px solid rgba(255,255,255,0.18);
       backdrop-filter: blur(8px);
-      box-shadow: 0 16px 34px rgba(0,0,0,0.24);
+      box-shadow: 0 16px 34px rgba(0,0,0,0.18);
     }
     .scanner-latest-photo, .scanner-latest-placeholder {
       width: 74px;
@@ -158,6 +156,8 @@
       font-weight: bold;
       margin-bottom: 6px;
     }
+    .scanner-latest-label.entry { background: rgba(15,169,88,0.96); color: #fff; }
+    .scanner-latest-label.exit { background: rgba(30,94,163,0.96); color: #fff; }
     .scanner-latest-name {
       font-size: 24px;
       line-height: 1.1;
@@ -276,9 +276,6 @@
       }
       .scanner-latest {
         grid-template-columns: 56px 1fr;
-        left: 10px;
-        right: 10px;
-        top: 10px;
         padding: 10px 12px;
       }
       .scanner-latest-photo, .scanner-latest-placeholder {
@@ -313,8 +310,7 @@
       </div>
     </div>
 
-    <div class="scanner-card">
-      <div class="scanner-latest" id="scannerLatest">
+    <div class="scanner-latest" id="scannerLatest">
         <div class="scanner-latest-placeholder">QR</div>
         <div>
           <div class="scanner-latest-label">Última marcación</div>
@@ -322,6 +318,7 @@
           <div class="scanner-latest-meta">Aquí aparecerá la última entrada o salida confirmada.</div>
         </div>
       </div>
+    <div class="scanner-card">
       <div id="reader"></div>
       <div class="scanner-hint" id="scannerHint">Coloca el QR dentro del cuadro. El sistema confirmará entrada o salida.</div>
     </div>
@@ -644,24 +641,53 @@
       }
 
       const name = row.fullName || (row.person && row.person.fullName) || 'Trabajador';
-      const type = row.type || row.action || '';
+      const type = String(row.type || row.action || '').toUpperCase();
       const operation = row.operation || '';
       const datetime = row.datetime || row.timestamp || '';
       const encargado = row.encargado || '';
       const cargo = row.cargo || (row.person && row.person.cargo) || '';
-      const photoUrl = row.fotoUrl || (row.person && row.person.fotoUrl) || '';
+      const rawPhotoUrl = row.fotoUrl || row.photoUrl || row.FOTO_URL || (row.person && (row.person.fotoUrl || row.person.photoUrl || row.person.FOTO_URL)) || '';
+      const photoUrl = normalizePhotoUrl(rawPhotoUrl);
       const initials = getInitials(name);
-      const label = type === 'SALIDA' ? 'Última salida registrada' : 'Última entrada registrada';
+      const isExit = type === 'SALIDA';
+      const label = isExit ? 'SALIDA REGISTRADA' : 'ENTRADA REGISTRADA';
+      const labelClass = isExit ? 'exit' : 'entry';
       const visual = photoUrl
-        ? `<img class="scanner-latest-photo" src="${photoUrl}" alt="foto">`
-        : `<div class="scanner-latest-placeholder">${escapeHtml(initials)}</div>`;
+        ? `<img class="scanner-latest-photo" src="${escapeHtml(photoUrl)}" alt="foto" onerror="this.outerHTML='${buildLatestPlaceholderHtml(initials)}'">`
+        : buildLatestPlaceholderHtml(initials);
 
       box.innerHTML = `${visual}
         <div>
-          <div class="scanner-latest-label">${escapeHtml(label)}</div>
+          <div class="scanner-latest-label ${labelClass}">${escapeHtml(label)}</div>
           <div class="scanner-latest-name">${escapeHtml(name)}</div>
           <div class="scanner-latest-meta">${escapeHtml([cargo, operation, datetime].filter(Boolean).join(' · '))}${encargado ? ' · Encargado: ' + escapeHtml(encargado) : ''}</div>
         </div>`;
+    }
+
+    function buildLatestPlaceholderHtml(initials) {
+      return `<div class="scanner-latest-placeholder">${escapeHtml(initials)}</div>`;
+    }
+
+    function normalizePhotoUrl(url) {
+      const value = String(url || '').trim();
+      if (!value) return '';
+      if (value.indexOf('data:image') === 0) return value;
+
+      const driveId = extractDriveFileId(value);
+      if (driveId) {
+        return 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(driveId) + '&sz=w240';
+      }
+      return value;
+    }
+
+    function extractDriveFileId(url) {
+      const value = String(url || '').trim();
+      if (!value) return '';
+      let match = value.match(/\/d\/([a-zA-Z0-9_-]+)/);
+      if (match && match[1]) return match[1];
+      match = value.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+      if (match && match[1]) return match[1];
+      return '';
     }
 
     function getInitials(name) {
@@ -687,10 +713,11 @@
       document.getElementById('feedbackMeta').textContent = data.meta || '';
 
       const icon = data.variant === 'warning' ? '!' : (data.variant === 'info' ? '…' : '✓');
-      if (data.photoUrl) {
-        visual.outerHTML = `<img id="feedbackVisual" class="feedback-photo" src="${data.photoUrl}" alt="foto">`;
+      const feedbackPhotoUrl = normalizePhotoUrl(data.photoUrl || data.fotoUrl || data.FOTO_URL || "");
+      if (feedbackPhotoUrl) {
+        visual.outerHTML = `<img id="feedbackVisual" class="feedback-photo" src="${escapeHtml(feedbackPhotoUrl)}" alt="foto" onerror="this.outerHTML='<div id=&quot;feedbackVisual&quot; class=&quot;feedback-icon&quot;>${icon}<\/div>'">`;
       } else {
-        document.getElementById('feedbackVisual').outerHTML = `<div id="feedbackVisual" class="feedback-icon">${icon}</div>`;
+        document.getElementById("feedbackVisual").outerHTML = `<div id="feedbackVisual" class="feedback-icon">${icon}</div>`;
       }
 
       const duration = Number(data.duration || (data.variant === 'warning' ? 2800 : (data.variant === 'info' ? 0 : 2300)));
