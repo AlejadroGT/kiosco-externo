@@ -119,14 +119,12 @@
       background: rgba(255,255,255,0.06);
     }
     .scanner-latest {
-      position: relative;
-      z-index: 1;
       display: grid;
-      grid-template-columns: 74px 1fr;
-      gap: 14px;
+      grid-template-columns: 88px minmax(0, 1fr);
+      gap: 16px;
       align-items: center;
-      padding: 14px 16px;
-      border-radius: 22px;
+      padding: 16px;
+      border-radius: 24px;
       margin-bottom: 14px;
       background: rgba(255,255,255,0.14);
       border: 1px solid rgba(255,255,255,0.18);
@@ -134,9 +132,9 @@
       box-shadow: 0 16px 34px rgba(0,0,0,0.18);
     }
     .scanner-latest-photo, .scanner-latest-placeholder {
-      width: 74px;
-      height: 74px;
-      border-radius: 18px;
+      width: 88px;
+      height: 88px;
+      border-radius: 20px;
       object-fit: cover;
       background: rgba(255,255,255,0.16);
       display: flex;
@@ -144,29 +142,47 @@
       justify-content: center;
       font-weight: bold;
       font-size: 26px;
-      border: 2px solid rgba(255,255,255,0.12);
+      border: 2px solid rgba(255,255,255,0.14);
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .scanner-latest-body {
+      min-width: 0;
+      display: grid;
+      gap: 7px;
+    }
+    .scanner-latest-top {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
     }
     .scanner-latest-label {
-      display: inline-block;
-      padding: 5px 10px;
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      padding: 6px 12px;
       border-radius: 999px;
       background: rgba(140,198,63,0.90);
       color: #10243f;
       font-size: 12px;
       font-weight: bold;
-      margin-bottom: 6px;
+      letter-spacing: .02em;
+      white-space: nowrap;
     }
     .scanner-latest-label.entry { background: rgba(15,169,88,0.96); color: #fff; }
     .scanner-latest-label.exit { background: rgba(30,94,163,0.96); color: #fff; }
     .scanner-latest-name {
-      font-size: 24px;
-      line-height: 1.1;
+      font-size: clamp(22px, 3vw, 34px);
+      line-height: 1.05;
       font-weight: bold;
+      overflow-wrap: anywhere;
     }
     .scanner-latest-meta {
-      margin-top: 6px;
-      color: rgba(255,255,255,0.90);
-      font-size: 14px;
+      color: rgba(255,255,255,0.92);
+      font-size: clamp(13px, 1.7vw, 16px);
+      line-height: 1.35;
+      overflow-wrap: anywhere;
     }
     .scanner-hint {
       position: absolute;
@@ -275,20 +291,19 @@
         font-size: 30px;
       }
       .scanner-latest {
-        grid-template-columns: 56px 1fr;
-        padding: 10px 12px;
+        grid-template-columns: 72px minmax(0, 1fr);
+        padding: 12px;
+        gap: 12px;
       }
       .scanner-latest-photo, .scanner-latest-placeholder {
-        width: 56px;
-        height: 56px;
-        border-radius: 14px;
-        font-size: 20px;
+        width: 72px;
+        height: 72px;
+        border-radius: 16px;
+        font-size: 22px;
       }
-      .scanner-latest-name {
-        font-size: 18px;
-      }
-      .scanner-latest-meta {
-        font-size: 12px;
+      .scanner-latest-label {
+        font-size: 11px;
+        padding: 5px 9px;
       }
     }
   </style>
@@ -311,13 +326,14 @@
     </div>
 
     <div class="scanner-latest" id="scannerLatest">
-        <div class="scanner-latest-placeholder">QR</div>
-        <div>
-          <div class="scanner-latest-label">Última marcación</div>
-          <div class="scanner-latest-name">Esperando registro</div>
-          <div class="scanner-latest-meta">Aquí aparecerá la última entrada o salida confirmada.</div>
-        </div>
+      <div class="scanner-latest-placeholder">QR</div>
+      <div class="scanner-latest-body">
+        <div class="scanner-latest-top"><span class="scanner-latest-label">Última marcación</span></div>
+        <div class="scanner-latest-name">Esperando registro</div>
+        <div class="scanner-latest-meta">Aquí aparecerá la última entrada o salida confirmada.</div>
       </div>
+    </div>
+
     <div class="scanner-card">
       <div id="reader"></div>
       <div class="scanner-hint" id="scannerHint">Coloca el QR dentro del cuadro. El sistema confirmará entrada o salida.</div>
@@ -351,7 +367,6 @@
       scanLocked: false,
       localCooldownByQr: {},
       feedbackTimer: null,
-      latestMark: null,
       defaultEncargado: 'SISTEMA'
     };
 
@@ -377,13 +392,12 @@
 
       appState.config = res.config || {};
       appState.people = res.people || [];
-      appState.latestMark = (res.recent && res.recent.length) ? res.recent[0] : null;
       appState.defaultEncargado = appState.config.defaultEncargado || ((appState.config.encargados || [])[0] || 'SISTEMA');
 
-      renderLatestMark(appState.latestMark);
       document.getElementById('appName').textContent = appState.config.companyName || 'Multiservicios Redetenis';
       document.getElementById('appSubtitle').textContent = appState.config.companyTagline || 'Kiosco QR';
       document.getElementById('brandLogo').src = appState.config.logoUrl || BRAND_LOGO_DATA_URL;
+      renderLatestMark((res.recent || [])[0] || null);
     }
 
     function setScannerButtonState() {
@@ -412,7 +426,7 @@
     }
 
     function blockQrLocally(qrText) {
-      appState.localCooldownByQr[qrText] = Date.now() + (60 * 1000);
+      appState.localCooldownByQr[qrText] = Date.now() + (1 * 60 * 1000);
     }
 
     async function requestCameraPermissionOnce() {
@@ -577,28 +591,27 @@
 
         blockQrLocally(normalizedText);
 
-        appState.latestMark = (res.recent && res.recent.length) ? res.recent[0] : {
-          action: res.action,
-          type: res.action,
-          operation: res.operation || '',
-          timestamp: res.timestamp || '',
-          datetime: res.timestamp || '',
-          person: res.person || null,
-          fullName: res.person && res.person.fullName ? res.person.fullName : 'Trabajador',
-          fotoUrl: res.person && res.person.fotoUrl ? res.person.fotoUrl : ''
-        };
-        renderLatestMark(appState.latestMark);
-
         const personName = res.person && res.person.fullName ? res.person.fullName : 'Trabajador';
         const operationName = res.operation || (res.person && res.person.currentOperation) || '';
         const isEntry = res.action === 'ENTRADA';
+        const latestRow = (res.recent || [])[0] || {
+          fullName: personName,
+          type: res.action,
+          operation: operationName,
+          datetime: res.timestamp,
+          cargo: res.person && res.person.cargo ? res.person.cargo : '',
+          encargado: getSelectedEncargado(),
+          fotoUrl: res.person && res.person.fotoUrl ? res.person.fotoUrl : '',
+          fotoDataUrl: res.person && res.person.fotoDataUrl ? res.person.fotoDataUrl : ''
+        };
+        renderLatestMark(latestRow);
 
         showFeedback({
           variant: isEntry ? 'success' : 'exit',
           title: isEntry ? '✓ Entrada registrada' : '✓ Salida registrada',
           subtitle: isEntry ? ('Bienvenido, ' + personName) : ('Hasta pronto, ' + personName),
           meta: [operationName, res.timestamp].filter(Boolean).join(' · '),
-          photoUrl: res.person && res.person.fotoUrl ? res.person.fotoUrl : '',
+          photoUrl: (res.person && (res.person.fotoDataUrl || res.person.fotoUrl)) ? (res.person.fotoDataUrl || res.person.fotoUrl) : '',
           duration: 2300
         });
 
@@ -624,7 +637,6 @@
       }
     }
 
-
     function renderLatestMark(row) {
       const box = document.getElementById('scannerLatest');
       if (!box) return;
@@ -632,8 +644,8 @@
       if (!row) {
         box.innerHTML = `
           <div class="scanner-latest-placeholder">QR</div>
-          <div>
-            <div class="scanner-latest-label">Última marcación</div>
+          <div class="scanner-latest-body">
+            <div class="scanner-latest-top"><span class="scanner-latest-label">Última marcación</span></div>
             <div class="scanner-latest-name">Esperando registro</div>
             <div class="scanner-latest-meta">Aquí aparecerá la última entrada o salida confirmada.</div>
           </div>`;
@@ -646,58 +658,39 @@
       const datetime = row.datetime || row.timestamp || '';
       const encargado = row.encargado || '';
       const cargo = row.cargo || (row.person && row.person.cargo) || '';
-      const rawPhotoUrl = row.fotoUrl || row.photoUrl || row.FOTO_URL || (row.person && (row.person.fotoUrl || row.person.photoUrl || row.person.FOTO_URL)) || '';
-      const photoUrl = normalizePhotoUrl(rawPhotoUrl);
+      const photoUrl = row.fotoDataUrl || row.photoDataUrl || row.fotoUrl || row.photoUrl || (row.person && (row.person.fotoDataUrl || row.person.fotoUrl || row.person.photoUrl)) || '';
       const initials = getInitials(name);
       const isExit = type === 'SALIDA';
       const label = isExit ? 'SALIDA REGISTRADA' : 'ENTRADA REGISTRADA';
       const labelClass = isExit ? 'exit' : 'entry';
-      const visual = photoUrl
-        ? `<img class="scanner-latest-photo" src="${escapeHtml(photoUrl)}" alt="foto" onerror="this.outerHTML='${buildLatestPlaceholderHtml(initials)}'">`
-        : buildLatestPlaceholderHtml(initials);
+      const metaParts = [cargo, operation, datetime].filter(Boolean);
+      const encargadoText = encargado ? 'Encargado: ' + encargado : '';
 
-      box.innerHTML = `${visual}
-        <div>
-          <div class="scanner-latest-label ${labelClass}">${escapeHtml(label)}</div>
+      box.innerHTML = `
+        <div class="scanner-latest-placeholder" id="latestPhotoFallback">${escapeHtml(initials)}</div>
+        <div class="scanner-latest-body">
+          <div class="scanner-latest-top"><span class="scanner-latest-label ${labelClass}">${escapeHtml(label)}</span></div>
           <div class="scanner-latest-name">${escapeHtml(name)}</div>
-          <div class="scanner-latest-meta">${escapeHtml([cargo, operation, datetime].filter(Boolean).join(' · '))}${encargado ? ' · Encargado: ' + escapeHtml(encargado) : ''}</div>
+          <div class="scanner-latest-meta">${escapeHtml(metaParts.join(' · '))}${encargadoText ? '<br>' + escapeHtml(encargadoText) : ''}</div>
         </div>`;
-    }
 
-    function buildLatestPlaceholderHtml(initials) {
-      return `<div class="scanner-latest-placeholder">${escapeHtml(initials)}</div>`;
-    }
-
-    function normalizePhotoUrl(url) {
-      const value = String(url || '').trim();
-      if (!value) return '';
-      if (value.indexOf('data:image') === 0) return value;
-
-      const driveId = extractDriveFileId(value);
-      if (driveId) {
-        return 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(driveId) + '&sz=w240';
+      if (photoUrl) {
+        const fallback = document.getElementById('latestPhotoFallback');
+        const img = new Image();
+        img.className = 'scanner-latest-photo';
+        img.alt = 'Foto de ' + name;
+        img.onload = function() {
+          if (fallback && fallback.parentNode) fallback.parentNode.replaceChild(img, fallback);
+        };
+        img.onerror = function() {};
+        img.src = photoUrl;
       }
-      return value;
-    }
-
-    function extractDriveFileId(url) {
-      const value = String(url || '').trim();
-      if (!value) return '';
-      let match = value.match(/\/d\/([a-zA-Z0-9_-]+)/);
-      if (match && match[1]) return match[1];
-      match = value.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-      if (match && match[1]) return match[1];
-      return '';
     }
 
     function getInitials(name) {
-      return String(name || 'QR')
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean)
-        .slice(0, 2)
-        .map(part => part.charAt(0).toUpperCase())
-        .join('') || 'QR';
+      const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+      if (!parts.length) return 'QR';
+      return parts.slice(0, 2).map(p => p.charAt(0).toUpperCase()).join('');
     }
 
     function showFeedback(data) {
@@ -713,11 +706,10 @@
       document.getElementById('feedbackMeta').textContent = data.meta || '';
 
       const icon = data.variant === 'warning' ? '!' : (data.variant === 'info' ? '…' : '✓');
-      const feedbackPhotoUrl = normalizePhotoUrl(data.photoUrl || data.fotoUrl || data.FOTO_URL || "");
-      if (feedbackPhotoUrl) {
-        visual.outerHTML = `<img id="feedbackVisual" class="feedback-photo" src="${escapeHtml(feedbackPhotoUrl)}" alt="foto" onerror="this.outerHTML='<div id=&quot;feedbackVisual&quot; class=&quot;feedback-icon&quot;>${icon}<\/div>'">`;
+      if (data.photoUrl) {
+        visual.outerHTML = `<img id="feedbackVisual" class="feedback-photo" src="${escapeHtml(data.photoUrl)}" alt="foto" onerror="this.outerHTML='<div id=&quot;feedbackVisual&quot; class=&quot;feedback-icon&quot;>${icon}</div>'">`;
       } else {
-        document.getElementById("feedbackVisual").outerHTML = `<div id="feedbackVisual" class="feedback-icon">${icon}</div>`;
+        document.getElementById('feedbackVisual').outerHTML = `<div id="feedbackVisual" class="feedback-icon">${icon}</div>`;
       }
 
       const duration = Number(data.duration || (data.variant === 'warning' ? 2800 : (data.variant === 'info' ? 0 : 2300)));
