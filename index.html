@@ -325,18 +325,9 @@
       </div>
     </div>
 
-    <div class="scanner-latest" id="scannerLatest">
-      <div class="scanner-latest-placeholder">QR</div>
-      <div class="scanner-latest-body">
-        <div class="scanner-latest-top"><span class="scanner-latest-label">Última marcación</span></div>
-        <div class="scanner-latest-name">Esperando registro</div>
-        <div class="scanner-latest-meta">Aquí aparecerá la última entrada o salida confirmada.</div>
-      </div>
-    </div>
-
     <div class="scanner-card">
       <div id="reader"></div>
-      <div class="scanner-hint" id="scannerHint">Coloca el QR dentro del cuadro. El sistema confirmará entrada o salida.</div>
+      <div class="scanner-hint" id="scannerHint">Coloca el QR dentro del cuadro. Confirma tu marcación en la pantalla superior.</div>
     </div>
 
     <div class="footer-status" id="footerStatus">Conectando con el sistema...</div>
@@ -367,7 +358,8 @@
       scanLocked: false,
       localCooldownByQr: {},
       feedbackTimer: null,
-      defaultEncargado: 'SISTEMA'
+      defaultEncargado: 'SISTEMA',
+      online: navigator.onLine !== false
     };
 
     document.addEventListener('DOMContentLoaded', initApp);
@@ -375,12 +367,18 @@
     async function initApp() {
       setScannerButtonState();
       document.getElementById('brandLogo').src = BRAND_LOGO_DATA_URL;
+      bindConnectionEvents();
+      updateConnectionStatus();
 
       try {
         await refreshAll();
-        document.getElementById('footerStatus').textContent = 'Conectado. Inicia la cámara para comenzar a escanear.';
+        if (appState.online) {
+          document.getElementById('footerStatus').textContent = 'Conectado. Inicia la cámara para comenzar a escanear.';
+        }
       } catch (err) {
-        document.getElementById('footerStatus').textContent = err.message || String(err);
+        document.getElementById('footerStatus').textContent = appState.online
+          ? 'No se pudo conectar con el sistema. Verifica señal e intenta nuevamente.'
+          : 'Sin conexión a internet. Espera señal para registrar marcaciones.';
       }
     }
 
@@ -397,7 +395,22 @@
       document.getElementById('appName').textContent = appState.config.companyName || 'Multiservicios Redetenis';
       document.getElementById('appSubtitle').textContent = appState.config.companyTagline || 'Kiosco QR';
       document.getElementById('brandLogo').src = appState.config.logoUrl || BRAND_LOGO_DATA_URL;
-      renderLatestMark((res.recent || [])[0] || null);
+    }
+
+    function bindConnectionEvents() {
+      window.addEventListener('online', updateConnectionStatus);
+      window.addEventListener('offline', updateConnectionStatus);
+    }
+
+    function updateConnectionStatus() {
+      appState.online = navigator.onLine !== false;
+      const footer = document.getElementById('footerStatus');
+      if (!footer) return;
+      if (!appState.online) {
+        footer.textContent = 'Sin conexión a internet. No se puede registrar en este momento.';
+      } else if (!appState.scannerRunning) {
+        footer.textContent = 'Conexión disponible. Inicia la cámara para comenzar a escanear.';
+      }
     }
 
     function setScannerButtonState() {
@@ -548,149 +561,74 @@
       const normalizedText = normalizeQrText(decodedText);
       if (!normalizedText) return;
       if (appState.scanLocked) return;
+
+      if (!appState.online || navigator.onLine === false) {
+        showFeedback({
+          variant: 'warning',
+          title: 'Sin conexión',
+          subtitle: 'No se pudo enviar la marcación. Espera señal e intenta nuevamente.',
+          meta: '',
+          duration: 3200
+        });
+        document.getElementById('footerStatus').textContent = 'Sin conexión a internet. No se envió ninguna marcación.';
+        return;
+      }
+
       if (isLocalBlocked(normalizedText)) {
         showFeedback({
           variant: 'warning',
-          title: 'Código ya registrado',
+          title: 'QR leído recientemente',
           subtitle: 'Espera 1 minuto antes de volver a escanear este mismo QR.',
-          meta: normalizedText,
-          duration: 2600
+          meta: '',
+          duration: 2400
         });
         return;
       }
 
       appState.scanLocked = true;
-      document.getElementById('footerStatus').textContent = 'Procesando marcación...';
+      blockQrLocally(normalizedText);
+      document.getElementById('footerStatus').textContent = 'QR leído. Confirma la marcación en la pantalla superior.';
       showFeedback({
         variant: 'info',
-        title: 'Procesando...',
-        subtitle: 'Validando entrada o salida.',
-        meta: normalizedText,
-        duration: 0
+        title: 'QR leído',
+        subtitle: 'Espere un momento y confirme su marcación en la pantalla superior.',
+        meta: '',
+        duration: 2600
       });
 
-      try {
-        const res = await apiRequest('scan', {
-          qrText: normalizedText,
-          encargado: getSelectedEncargado(),
-          operacion: '',
-          dispositivo: (navigator.userAgent || 'KIOSCO_EXTERNO').substring(0, 250)
-        });
-
-        if (!res.ok) {
+      apiRequest('scan', {
+        qrText: normalizedText,
+        encargado: getSelectedEncargado(),
+        operacion: '',
+        cooldownSeconds: 60,
+        dispositivo: (navigator.userAgent || 'KIOSCO_EXTERNO').substring(0, 250)
+      }).then(res => {
+        if (!res || !res.ok) {
           showFeedback({
             variant: 'warning',
             title: 'No se pudo procesar',
-            subtitle: res.message || 'Revisa el código o avisa al encargado.',
-            meta: normalizedText,
-            duration: 2800
+            subtitle: (res && res.message) ? res.message : 'Revisa el código o avisa al encargado.',
+            meta: '',
+            duration: 3200
           });
-          document.getElementById('footerStatus').textContent = (res.message || 'No se pudo procesar el código.');
+          document.getElementById('footerStatus').textContent = (res && res.message) ? res.message : 'No se pudo procesar el código.';
           return;
         }
-
-        blockQrLocally(normalizedText);
-
-        const personName = res.person && res.person.fullName ? res.person.fullName : 'Trabajador';
-        const operationName = res.operation || (res.person && res.person.currentOperation) || '';
-        const isEntry = res.action === 'ENTRADA';
-        const latestRow = (res.recent || [])[0] || {
-          fullName: personName,
-          type: res.action,
-          operation: operationName,
-          datetime: res.timestamp,
-          cargo: res.person && res.person.cargo ? res.person.cargo : '',
-          encargado: getSelectedEncargado(),
-          fotoUrl: res.person && res.person.fotoUrl ? res.person.fotoUrl : '',
-          fotoDataUrl: res.person && res.person.fotoDataUrl ? res.person.fotoDataUrl : ''
-        };
-        renderLatestMark(latestRow);
-
-        showFeedback({
-          variant: isEntry ? 'success' : 'exit',
-          title: isEntry ? '✓ Entrada registrada' : '✓ Salida registrada',
-          subtitle: isEntry ? ('Bienvenido, ' + personName) : ('Hasta pronto, ' + personName),
-          meta: [operationName, res.timestamp].filter(Boolean).join(' · '),
-          photoUrl: (res.person && (res.person.fotoDataUrl || res.person.fotoUrl)) ? (res.person.fotoDataUrl || res.person.fotoUrl) : '',
-          duration: 2300
-        });
-
-        document.getElementById('footerStatus').textContent = (isEntry ? 'Entrada' : 'Salida') + ' registrada para ' + personName + '.';
-      } catch (err) {
-        blockQrLocally(normalizedText);
-        try {
-          await refreshAll();
-        } catch (refreshErr) {}
-
+        document.getElementById('footerStatus').textContent = 'Solicitud enviada. Confirma la marcación en la pantalla superior.';
+      }).catch(err => {
         showFeedback({
           variant: 'warning',
-          title: 'Respuesta no confirmada',
-          subtitle: 'Revisa la última marcación mostrada arriba antes de volver a escanear.',
-          meta: err.message || String(err),
-          duration: 3600
+          title: 'Conexión inestable',
+          subtitle: 'Se intentó enviar la marcación. Si no aparece arriba, vuelve a escanear cuando haya señal.',
+          meta: '',
+          duration: 4200
         });
-        document.getElementById('footerStatus').textContent = 'No se confirmó la respuesta. Verifica la última marcación mostrada antes de repetir.';
-      } finally {
-        setTimeout(() => {
-          appState.scanLocked = false;
-        }, 900);
-      }
-    }
+        document.getElementById('footerStatus').textContent = 'Conexión inestable. Revisa la pantalla superior antes de repetir.';
+      });
 
-    function renderLatestMark(row) {
-      const box = document.getElementById('scannerLatest');
-      if (!box) return;
-
-      if (!row) {
-        box.innerHTML = `
-          <div class="scanner-latest-placeholder">QR</div>
-          <div class="scanner-latest-body">
-            <div class="scanner-latest-top"><span class="scanner-latest-label">Última marcación</span></div>
-            <div class="scanner-latest-name">Esperando registro</div>
-            <div class="scanner-latest-meta">Aquí aparecerá la última entrada o salida confirmada.</div>
-          </div>`;
-        return;
-      }
-
-      const name = row.fullName || (row.person && row.person.fullName) || 'Trabajador';
-      const type = String(row.type || row.action || '').toUpperCase();
-      const operation = row.operation || '';
-      const datetime = row.datetime || row.timestamp || '';
-      const encargado = row.encargado || '';
-      const cargo = row.cargo || (row.person && row.person.cargo) || '';
-      const photoUrl = row.fotoDataUrl || row.photoDataUrl || row.fotoUrl || row.photoUrl || (row.person && (row.person.fotoDataUrl || row.person.fotoUrl || row.person.photoUrl)) || '';
-      const initials = getInitials(name);
-      const isExit = type === 'SALIDA';
-      const label = isExit ? 'SALIDA REGISTRADA' : 'ENTRADA REGISTRADA';
-      const labelClass = isExit ? 'exit' : 'entry';
-      const metaParts = [cargo, operation, datetime].filter(Boolean);
-      const encargadoText = encargado ? 'Encargado: ' + encargado : '';
-
-      box.innerHTML = `
-        <div class="scanner-latest-placeholder" id="latestPhotoFallback">${escapeHtml(initials)}</div>
-        <div class="scanner-latest-body">
-          <div class="scanner-latest-top"><span class="scanner-latest-label ${labelClass}">${escapeHtml(label)}</span></div>
-          <div class="scanner-latest-name">${escapeHtml(name)}</div>
-          <div class="scanner-latest-meta">${escapeHtml(metaParts.join(' · '))}${encargadoText ? '<br>' + escapeHtml(encargadoText) : ''}</div>
-        </div>`;
-
-      if (photoUrl) {
-        const fallback = document.getElementById('latestPhotoFallback');
-        const img = new Image();
-        img.className = 'scanner-latest-photo';
-        img.alt = 'Foto de ' + name;
-        img.onload = function() {
-          if (fallback && fallback.parentNode) fallback.parentNode.replaceChild(img, fallback);
-        };
-        img.onerror = function() {};
-        img.src = photoUrl;
-      }
-    }
-
-    function getInitials(name) {
-      const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
-      if (!parts.length) return 'QR';
-      return parts.slice(0, 2).map(p => p.charAt(0).toUpperCase()).join('');
+      setTimeout(() => {
+        appState.scanLocked = false;
+      }, 900);
     }
 
     function showFeedback(data) {
@@ -761,7 +699,7 @@
         const timeoutId = setTimeout(() => {
           cleanup();
           reject(new Error('Tiempo de espera agotado al consultar Apps Script.'));
-        }, 20000);
+        }, 9000);
 
         window[callbackName] = (data) => {
           cleanup();
