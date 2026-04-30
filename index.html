@@ -327,7 +327,7 @@
 
     <div class="scanner-card">
       <div id="reader"></div>
-      <div class="scanner-hint" id="scannerHint">Coloca el QR dentro del cuadro. Luego confirma tu marcación en la pantalla superior.</div>
+      <div class="scanner-hint" id="scannerHint">Coloca el QR dentro del cuadro. Confirma tu marcación en la pantalla superior.</div>
     </div>
 
     <div class="footer-status" id="footerStatus">Conectando con el sistema...</div>
@@ -356,16 +356,14 @@
       scannerRunning: false,
       scannerBusy: false,
       scanLocked: false,
+      scanInputLocked: false,
+      scanUnlockTimer: null,
       localCooldownByQr: {},
       feedbackTimer: null,
       defaultEncargado: 'SISTEMA'
     };
 
     document.addEventListener('DOMContentLoaded', initApp);
-    window.addEventListener('offline', showOfflineStatus);
-    window.addEventListener('online', function() {
-      document.getElementById('footerStatus').textContent = 'Conexión disponible. Escanea el siguiente trabajador.';
-    });
 
     async function initApp() {
       setScannerButtonState();
@@ -375,12 +373,7 @@
         await refreshAll();
         document.getElementById('footerStatus').textContent = 'Conectado. Inicia la cámara para comenzar a escanear.';
       } catch (err) {
-        if (isOffline()) {
-          showOfflineStatus();
-        } else {
-          document.getElementById('footerStatus').textContent = 'No se pudo cargar el kiosco. Avise al encargado.';
-          console.warn('No se pudo cargar el kiosco:', err);
-        }
+        document.getElementById('footerStatus').textContent = err.message || String(err);
       }
     }
 
@@ -391,7 +384,7 @@
       }
 
       appState.config = res.config || {};
-      appState.people = [];
+      appState.people = res.people || [];
       appState.defaultEncargado = appState.config.defaultEncargado || ((appState.config.encargados || [])[0] || 'SISTEMA');
 
       document.getElementById('appName').textContent = appState.config.companyName || 'Multiservicios Redetenis';
@@ -408,21 +401,6 @@
 
     function getSelectedEncargado() {
       return String(appState.defaultEncargado || 'SISTEMA').trim();
-    }
-
-    function isOffline() {
-      return typeof navigator !== 'undefined' && navigator.onLine === false;
-    }
-
-    function showOfflineStatus() {
-      document.getElementById('footerStatus').textContent = 'Sin internet. Revisa los datos móviles antes de escanear.';
-      showFeedback({
-        variant: 'warning',
-        title: 'Sin internet',
-        subtitle: 'Revisa los datos móviles antes de escanear.',
-        meta: '',
-        duration: 3000
-      });
     }
 
     function normalizeQrText(value) {
@@ -558,39 +536,59 @@
       return 'No se pudo iniciar la cámara: ' + text;
     }
 
+    function lockScannerInputFor(durationMs) {
+      appState.scanInputLocked = true;
+      clearTimeout(appState.scanUnlockTimer);
+      appState.scanUnlockTimer = setTimeout(() => {
+        appState.scanInputLocked = false;
+      }, Number(durationMs || 0));
+    }
+
     async function onScanSuccess(decodedText) {
       const normalizedText = normalizeQrText(decodedText);
       if (!normalizedText) return;
-      if (appState.scanLocked) return;
-
-      if (isOffline()) {
-        showOfflineStatus();
-        return;
-      }
+      if (appState.scanInputLocked) return;
 
       if (isLocalBlocked(normalizedText)) {
+        const warningDuration = 2600;
+        lockScannerInputFor(warningDuration);
         showFeedback({
           variant: 'warning',
-          title: 'Código leído recientemente',
+          title: 'Código ya leído',
           subtitle: 'Espera 1 minuto antes de volver a escanear este mismo QR.',
-          meta: '',
-          duration: 2600
+          meta: normalizedText,
+          duration: warningDuration
         });
-        document.getElementById('footerStatus').textContent = 'Este QR ya fue leído recientemente. Espera un momento.';
+        document.getElementById('footerStatus').textContent = 'QR leído recientemente. Espera 1 minuto antes de repetirlo.';
         return;
       }
 
-      appState.scanLocked = true;
+      if (navigator.onLine === false) {
+        const offlineDuration = 2800;
+        lockScannerInputFor(offlineDuration);
+        showFeedback({
+          variant: 'warning',
+          title: 'Sin internet',
+          subtitle: 'Revisa los datos móviles antes de escanear.',
+          meta: '',
+          duration: offlineDuration
+        });
+        document.getElementById('footerStatus').textContent = 'Sin internet. No se envió ninguna marcación.';
+        return;
+      }
+
+      const successDuration = 2800;
+      lockScannerInputFor(successDuration);
       blockQrLocally(normalizedText);
 
-      document.getElementById('footerStatus').textContent = 'QR leído correctamente. Confirma tu marcación en la pantalla superior.';
       showFeedback({
         variant: 'success',
-        title: 'QR leído correctamente',
+        title: '✓ QR leído correctamente',
         subtitle: 'Confirma tu marcación en la pantalla superior.',
-        meta: '',
-        duration: 2600
+        meta: normalizedText,
+        duration: successDuration
       });
+      document.getElementById('footerStatus').textContent = 'QR leído correctamente. Confirma la marcación en la pantalla superior.';
 
       apiRequest('scan', {
         qrText: normalizedText,
@@ -598,17 +596,13 @@
         operacion: '',
         dispositivo: (navigator.userAgent || 'KIOSCO_EXTERNO').substring(0, 250),
         cooldownSeconds: 60
-      }).then(function(res) {
+      }).then(res => {
         if (!res || !res.ok) {
-          console.warn('El backend no confirmó la marcación del QR leído:', res);
+          console.warn('Marcación no confirmada por backend:', res && res.message ? res.message : res);
         }
-      }).catch(function(err) {
-        console.warn('No se recibió confirmación del backend para el QR leído:', err);
+      }).catch(err => {
+        console.warn('Error silencioso al enviar marcación:', err && err.message ? err.message : err);
       });
-
-      setTimeout(() => {
-        appState.scanLocked = false;
-      }, 900);
     }
 
     function renderLatestMark(row) {
@@ -735,7 +729,7 @@
         const timeoutId = setTimeout(() => {
           cleanup();
           reject(new Error('Tiempo de espera agotado al consultar Apps Script.'));
-        }, 9000);
+        }, 20000);
 
         window[callbackName] = (data) => {
           cleanup();
