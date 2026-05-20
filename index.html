@@ -360,7 +360,11 @@
       scanUnlockTimer: null,
       localCooldownByQr: {},
       feedbackTimer: null,
-      defaultEncargado: 'SISTEMA'
+      defaultEncargado: 'SISTEMA',
+      scanQueue: [],
+      queueProcessing: false,
+      queueTimer: null,
+      storageKey: 'kioscoQrScanQueueV1'
     };
 
     document.addEventListener('DOMContentLoaded', initApp);
@@ -368,12 +372,24 @@
     async function initApp() {
       setScannerButtonState();
       document.getElementById('brandLogo').src = BRAND_LOGO_DATA_URL;
+      loadScanQueue();
+
+      window.addEventListener('online', () => {
+        updateQueueStatusText('Conexión restablecida.');
+        processScanQueue();
+      });
+      window.addEventListener('offline', () => {
+        updateQueueStatusText('Sin internet. Las marcaciones quedan en cola.');
+      });
 
       try {
         await refreshAll();
         document.getElementById('footerStatus').textContent = 'Conectado. Inicia la cámara para comenzar a escanear.';
+        updateQueueStatusText();
+        scheduleScanQueue(500);
       } catch (err) {
         document.getElementById('footerStatus').textContent = err.message || String(err);
+        scheduleScanQueue(2000);
       }
     }
 
@@ -419,6 +435,172 @@
 
     function blockQrLocally(qrText) {
       appState.localCooldownByQr[qrText] = Date.now() + (1 * 60 * 1000);
+    }
+
+    function loadScanQueue() {
+      try {
+        const raw = localStorage.getItem(appState.storageKey);
+        const parsed = raw ? JSON.parse(raw) : [];
+        appState.scanQueue = Array.isArray(parsed)
+          ? parsed
+              .filter(item => item && item.qrText && item.requestId)
+              .map(item => Object.assign({}, item, { status: 'PENDIENTE' }))
+          : [];
+      } catch (err) {
+        console.warn('No se pudo leer la cola local:', err);
+        appState.scanQueue = [];
+      }
+    }
+
+    function saveScanQueue() {
+      try {
+        localStorage.setItem(appState.storageKey, JSON.stringify(appState.scanQueue || []));
+      } catch (err) {
+        console.warn('No se pudo guardar la cola local:', err);
+      }
+    }
+
+    function createScanRequestId(qrText) {
+      const stamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+      const random = Math.random().toString(36).slice(2, 10).toUpperCase();
+      const suffix = String(qrText || '').replace(/[^A-Z0-9]/g, '').slice(0, 18);
+      return 'REQ-' + stamp + '-' + random + (suffix ? '-' + suffix : '');
+    }
+
+    function getQueueStats() {
+      return {
+        pending: (appState.scanQueue || []).length,
+        sending: appState.queueProcessing
+      };
+    }
+
+    function updateQueueStatusText(prefix) {
+      const stats = getQueueStats();
+      const el = document.getElementById('footerStatus');
+      if (!el) return;
+
+      if (stats.pending > 0) {
+        const base = prefix ? prefix + ' ' : '';
+        const sendingText = stats.sending ? 'Procesando cola...' : 'Marcaciones pendientes en cola.';
+        el.textContent = base + sendingText + ' Pendientes: ' + stats.pending + '.';
+      } else if (prefix) {
+        el.textContent = prefix + ' Cola vacía.';
+      }
+    }
+
+    function enqueueScan(qrText) {
+      const item = {
+        requestId: createScanRequestId(qrText),
+        qrText: qrText,
+        encargado: getSelectedEncargado(),
+        operacion: '',
+        dispositivo: (navigator.userAgent || 'KIOSCO_EXTERNO').substring(0, 250),
+        cooldownSeconds: 60,
+        createdAt: new Date().toISOString(),
+        attempts: 0,
+        status: 'PENDIENTE',
+        lastError: '',
+        nextAttemptAt: 0
+      };
+
+      appState.scanQueue.push(item);
+      saveScanQueue();
+      scheduleScanQueue(250);
+      return item;
+    }
+
+    function scheduleScanQueue(delayMs) {
+      clearTimeout(appState.queueTimer);
+      appState.queueTimer = setTimeout(processScanQueue, Number(delayMs || 0));
+    }
+
+    function getNextQueueItem() {
+      const now = Date.now();
+      return (appState.scanQueue || []).find(item => !item.nextAttemptAt || Number(item.nextAttemptAt) <= now);
+    }
+
+    function getRetryDelayMs(attempts) {
+      const base = 3000;
+      const max = 30000;
+      const factor = Math.max(0, Number(attempts || 1) - 1);
+      return Math.min(max, base * Math.pow(2, Math.min(factor, 4)));
+    }
+
+    async function processScanQueue() {
+      if (appState.queueProcessing) return;
+
+      if (!appState.scanQueue || appState.scanQueue.length === 0) {
+        updateQueueStatusText();
+        return;
+      }
+
+      if (navigator.onLine === false) {
+        updateQueueStatusText('Sin internet.');
+        scheduleScanQueue(5000);
+        return;
+      }
+
+      const item = getNextQueueItem();
+      if (!item) {
+        const nextTimes = appState.scanQueue
+          .map(q => Number(q.nextAttemptAt || 0))
+          .filter(Boolean);
+        const nextAt = nextTimes.length ? Math.min.apply(null, nextTimes) : Date.now() + 3000;
+        scheduleScanQueue(Math.max(1000, nextAt - Date.now()));
+        updateQueueStatusText();
+        return;
+      }
+
+      appState.queueProcessing = true;
+      item.status = 'ENVIANDO';
+      item.attempts = Number(item.attempts || 0) + 1;
+      item.lastError = '';
+      saveScanQueue();
+      updateQueueStatusText('Procesando marcación.');
+
+      try {
+        const res = await apiRequest('scan', {
+          qrText: item.qrText,
+          encargado: item.encargado || getSelectedEncargado(),
+          operacion: item.operacion || '',
+          dispositivo: item.dispositivo || (navigator.userAgent || 'KIOSCO_EXTERNO').substring(0, 250),
+          cooldownSeconds: item.cooldownSeconds || 60,
+          requestId: item.requestId
+        });
+
+        if (res && res.ok) {
+          appState.scanQueue = appState.scanQueue.filter(q => q.requestId !== item.requestId);
+          saveScanQueue();
+          renderLatestMark(res);
+          updateQueueStatusText('Marcación confirmada.');
+          appState.queueProcessing = false;
+          scheduleScanQueue(350);
+          return;
+        }
+
+        const backendMessage = (res && res.message) ? res.message : 'Apps Script no confirmó la marcación.';
+        if (res && res.retryable) {
+          throw new Error(backendMessage);
+        }
+
+        console.warn('Marcación descartada por respuesta del backend:', backendMessage, res);
+        appState.scanQueue = appState.scanQueue.filter(q => q.requestId !== item.requestId);
+        saveScanQueue();
+        updateQueueStatusText('El backend rechazó una marcación.');
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err || 'Error al enviar marcación.');
+        item.status = 'PENDIENTE';
+        item.lastError = message;
+        item.nextAttemptAt = Date.now() + getRetryDelayMs(item.attempts);
+        saveScanQueue();
+        console.warn('Marcación pendiente; se reintentará automáticamente:', message);
+        updateQueueStatusText('Reintentando automáticamente.');
+      } finally {
+        appState.queueProcessing = false;
+        if (appState.scanQueue && appState.scanQueue.length > 0) {
+          scheduleScanQueue(1200);
+        }
+      }
     }
 
     async function requestCameraPermissionOnce() {
@@ -563,46 +745,24 @@
         return;
       }
 
-      if (navigator.onLine === false) {
-        const offlineDuration = 2800;
-        lockScannerInputFor(offlineDuration);
-        showFeedback({
-          variant: 'warning',
-          title: 'Sin internet',
-          subtitle: 'Revisa los datos móviles antes de escanear.',
-          meta: '',
-          duration: offlineDuration
-        });
-        document.getElementById('footerStatus').textContent = 'Sin internet. No se envió ninguna marcación.';
-        return;
-      }
-
       const successDuration = 2800;
       lockScannerInputFor(successDuration);
       blockQrLocally(normalizedText);
 
+      const item = enqueueScan(normalizedText);
+
       showFeedback({
         variant: 'success',
         title: '✓ QR leído correctamente',
-        subtitle: 'Confirma tu marcación en la pantalla superior.',
+        subtitle: 'Marcación guardada en cola. Confirma en la pantalla superior.',
         meta: normalizedText,
         duration: successDuration
       });
-      document.getElementById('footerStatus').textContent = 'QR leído correctamente. Confirma la marcación en la pantalla superior.';
 
-      apiRequest('scan', {
-        qrText: normalizedText,
-        encargado: getSelectedEncargado(),
-        operacion: '',
-        dispositivo: (navigator.userAgent || 'KIOSCO_EXTERNO').substring(0, 250),
-        cooldownSeconds: 60
-      }).then(res => {
-        if (!res || !res.ok) {
-          console.warn('Marcación no confirmada por backend:', res && res.message ? res.message : res);
-        }
-      }).catch(err => {
-        console.warn('Error silencioso al enviar marcación:', err && err.message ? err.message : err);
-      });
+      document.getElementById('footerStatus').textContent =
+        'QR leído correctamente. Marcación en cola. Pendientes: ' + getQueueStats().pending + '.';
+
+      processScanQueue();
     }
 
     function renderLatestMark(row) {
