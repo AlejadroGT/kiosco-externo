@@ -444,7 +444,10 @@
         appState.scanQueue = Array.isArray(parsed)
           ? parsed
               .filter(item => item && item.qrText && item.requestId)
-              .map(item => Object.assign({}, item, { status: 'PENDIENTE' }))
+              .map(item => Object.assign({}, item, {
+                status: 'PENDIENTE',
+                scannedAtIso: item.scannedAtIso || item.createdAt || new Date().toISOString()
+              }))
           : [];
       } catch (err) {
         console.warn('No se pudo leer la cola local:', err);
@@ -460,8 +463,8 @@
       }
     }
 
-    function createScanRequestId(qrText) {
-      const stamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+    function createScanRequestId(qrText, scannedAtIso) {
+      const stamp = String(scannedAtIso || new Date().toISOString()).replace(/[^0-9]/g, '').slice(0, 14);
       const random = Math.random().toString(36).slice(2, 10).toUpperCase();
       const suffix = String(qrText || '').replace(/[^A-Z0-9]/g, '').slice(0, 18);
       return 'REQ-' + stamp + '-' + random + (suffix ? '-' + suffix : '');
@@ -489,14 +492,16 @@
     }
 
     function enqueueScan(qrText) {
+      const scannedAtIso = new Date().toISOString();
       const item = {
-        requestId: createScanRequestId(qrText),
+        requestId: createScanRequestId(qrText, scannedAtIso),
         qrText: qrText,
         encargado: getSelectedEncargado(),
         operacion: '',
         dispositivo: (navigator.userAgent || 'KIOSCO_EXTERNO').substring(0, 250),
         cooldownSeconds: 60,
-        createdAt: new Date().toISOString(),
+        createdAt: scannedAtIso,
+        scannedAtIso: scannedAtIso,
         attempts: 0,
         status: 'PENDIENTE',
         lastError: '',
@@ -565,7 +570,8 @@
           operacion: item.operacion || '',
           dispositivo: item.dispositivo || (navigator.userAgent || 'KIOSCO_EXTERNO').substring(0, 250),
           cooldownSeconds: item.cooldownSeconds || 60,
-          requestId: item.requestId
+          requestId: item.requestId,
+          scannedAtIso: item.scannedAtIso || item.createdAt || ''
         });
 
         if (res && res.ok) {
