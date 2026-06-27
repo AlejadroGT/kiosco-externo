@@ -578,6 +578,14 @@
           appState.scanQueue = appState.scanQueue.filter(q => q.requestId !== item.requestId);
           saveScanQueue();
           renderLatestMark(res);
+          showFeedback({
+            variant: String(res.action || '').toUpperCase() === 'SALIDA' ? 'exit' : 'success',
+            title: String(res.action || '').toUpperCase() === 'SALIDA' ? '✓ Salida registrada' : '✓ Entrada registrada',
+            subtitle: res.message || 'Marcación confirmada.',
+            meta: [res.timestamp || '', res.operation || '', res.scheduleLabel || ''].filter(Boolean).join(' · '),
+            photoUrl: res.person && (res.person.fotoUrl || res.person.photoUrl) ? (res.person.fotoUrl || res.person.photoUrl) : '',
+            duration: 3200
+          });
           updateQueueStatusText('Marcación confirmada.');
           appState.queueProcessing = false;
           scheduleScanQueue(350);
@@ -792,12 +800,13 @@
       const datetime = row.datetime || row.timestamp || '';
       const encargado = row.encargado || '';
       const cargo = row.cargo || (row.person && row.person.cargo) || '';
+      const scheduleLabel = row.scheduleLabel || '';
       const photoUrl = row.fotoDataUrl || row.photoDataUrl || row.fotoUrl || row.photoUrl || (row.person && (row.person.fotoDataUrl || row.person.fotoUrl || row.person.photoUrl)) || '';
       const initials = getInitials(name);
       const isExit = type === 'SALIDA';
       const label = isExit ? 'SALIDA REGISTRADA' : 'ENTRADA REGISTRADA';
       const labelClass = isExit ? 'exit' : 'entry';
-      const metaParts = [cargo, operation, datetime].filter(Boolean);
+      const metaParts = [cargo, operation, datetime, scheduleLabel].filter(Boolean);
       const encargadoText = encargado ? 'Encargado: ' + encargado : '';
 
       box.innerHTML = `
